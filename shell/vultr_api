@@ -1,0 +1,475 @@
+#!/bin/bash
+#########################################################################
+# File Name: vultr_api
+# Author: Awkee
+# mail: xiaoyu0720@gmail.com
+# Created Time: 2018年11月24日 星期六 10时35分14秒
+# 说明信息：
+#     1. 依赖命令工具：
+#              curl : 执行API操作命令
+#              jq   : JSON 数据格式化
+#              awk  : 文本数据中间逻辑处理
+#              proxychains4  : 命令行代理工具(可选)
+#             
+#########################################################################
+
+###########  configure variables ###################
+api_key=""
+url_base="https://api.vultr.com"
+url_ipcn="https://ip.cn"
+url_ipsb="http://ip.sb"
+
+rule_file=/tmp/firewall.rule.list
+
+#cmd_curl="proxychains4 curl"
+cmd_curl="curl"
+cmd_jq="jq"
+
+str_hits="(CTRL+C to Quit)"
+PMT=": >> "
+
+
+## Attribute codes:
+## 00=none 01=bold 04=underscore 05=blink 07=reverse 08=concealed 
+## Text color codes:
+## 30=black 31=red 32=green 33=yellow 34=blue 35=magenta 36=cyan 37=white
+## Background color codes:
+## 40=black 41=red 42=green 43=yellow 44=blue 45=magenta 46=cyan 47=white
+
+## \033[0m 关闭所有属性 
+## \033[1m 设置高亮度 
+## \033[4m 下划线 
+## \033[5m 闪烁 
+## \033[7m 反显 
+## \033[8m 消隐 
+## \033[30m — \33[37m 设置前景色 
+## \033[40m — \33[47m 设置背景色 
+## \033[nA 光标上移n行 
+## \033[nB 光标下移n行 
+## \033[nC 光标右移n行 
+## \033[nD 光标左移n行 
+## \033[y;xH设置光标位置 
+## \033[2J 清屏 
+## \033[K 清除从光标到行尾的内容 
+## \033[s 保存光标位置 
+## \033[u 恢复光标位置 
+## \033[?25l 隐藏光标 
+## \033[?25h 显示光标
+
+## 突出显示内容
+white_line()
+{
+	printf "\033[0;37m $@ \033[0m"
+}
+red_line()
+{
+	printf "\033[0;31;1m $@ \033[0m"
+	echo
+}
+green_line()
+{
+	printf "\033[0;32;7m $@ \033[0m"
+}
+
+println()
+{
+	echo
+	white_line ">-------------------------$@--------------------------------<"
+	echo
+}
+
+blankln()
+{
+	white_line "<-------------------------------------------------------------------------->"
+	echo
+}
+
+###########  public functions ###################
+get_subnet()
+{
+	echo "$1" | awk -F. -v size=$2 '{
+	if( size == 16)  printf("%s.%s.0.0", $1,$2);
+	if( size == 24)  printf("%s.%s.%s.0", $1,$2,$3);
+	if( size == 32)  printf("%s.%s.%s.%s", $1,$2,$3,$4);
+	if( size != 16 && size != 24  && size != 32 ) printf("%s.%s.%s.%s", $1,$2,$3,$4);
+	}'
+	return
+}
+
+get_myip()
+{
+	l_str_myip=`curl "${url_ipcn}" 2>/dev/null | awk '/IP/{ print $3 }'`
+	[[ "$?" != "0" ]]  &&  l_str_myip=`curl "${url_ipsb}" 2>/dev/null`
+	[[ "$?" != "0" ]]  &&  return 1
+	if [ "$l_str_myip" = "" ] ; then
+		return 2
+	fi
+	case "$1" in 
+		subnet)
+			l_str_myip=`get_subnet ${l_str_myip} ${2:-24}`
+		;;
+	esac
+	echo ${l_str_myip}
+	return 
+}
+
+###########  firewall functions ###################
+
+firewall_group_create()
+{
+	green_line "Input firewall group description (${str_hits})${PMT}"
+	read str_in
+	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/group_create \
+	--data "description=${str_in}"| ${cmd_jq}
+
+}
+firewall_group_delete()
+{
+	red_line "*********** firewall Group Delete ************"
+	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
+	read str_in
+	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/group_delete \
+	--data "FIREWALLGROUPID=${str_in}"| ${cmd_jq}
+}
+
+firewall_group_set_desc()
+{
+	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
+	read str_gid
+
+	green_line "Input firewall group description (${str_hits})${PMT}"
+	read str_desc
+	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/group_set_description \
+		--data "FIREWALLGROUPID=${str_gid}" --data "description=${str_desc}"| ${cmd_jq}
+}
+
+firewall_rule_list()
+{
+	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
+	read str_gid
+	[[ -z "${str_gid}" ]] && red_line "FIREWALLGROUPID must be invalid" && return 1
+
+	green_line "Input ip_type (v4/v6,default v4) (${str_hits})${PMT}"
+	read str_ip_type
+	[[ -z "${str_ip_type}" ]] && str_ip_type="v4"
+	[[ "${str_ip_type}" != "v4" &&  ${str_ip_type} != "v6" ]] && red_line "invalid ip_type[${str_ip_type}]!v4/v6?" && return 2
+
+	${cmd_curl} -H "API-Key: ${api_key}" "${url_base}/v1/firewall/rule_list?FIREWALLGROUPID=${str_gid}&direction=in&ip_type=${str_ip_type}"| ${cmd_jq} "." > ${rule_file}.tmp 
+	println "firewall rule list formated"
+   	awk -F: -v iptype=${str_ip_type} 'BEGIN{
+		v1["rulenumber"] = 1
+		v1["iptype"] = 2
+		v1["protocol"] = 3
+		v1["subnet"] = 4
+		v1["subnet_size"] = 5
+		v1["port"] = 6
+		v1["notes"] = 7
+		max_c = 7
+		printf("rulenumber iptype protocol subnet subnet_size port notes\n");
+	}{
+		gsub(/[\",]/,"");
+	}/rulenumber/{ rulenumber=$2}
+	/protocol/{ protocol = $2 }
+	/subnet/ && !/subnet_size/{ subnet = $2 }
+	/subnet_size/{ subnet_size = $2 }
+	/port/{ port = $2 }
+	/notes/{ printf("%4d %s %s %s %s %s %s\n", rulenumber, protocol, iptype, subnet, subnet_size, port, $2); }' ${rule_file}.tmp |column -t |tee ${rule_file}
+	[[ -f "${rule_file}.tmp" ]] && rm -f "${rule_file}.tmp"
+	red_line "firewall rules export to file:[ ${rule_file} ]"
+	red_line "You can use firewall load command to import the firewall rules"
+}
+
+
+firewall_rule_create()
+{
+	green_line "Input firewall group FIREWALLGROUPID ${str_hits}${PMT}"
+	read str_gid
+	[[ -z "${str_gid}" ]] && red_line "FIREWALLGROUPID must be invalid" && return 1
+
+	green_line "Input ip_type (v4/v6,default v4) (${str_hits})${PMT}"
+	read str_ip_type
+	[[ -z "${str_ip_type}" ]] && str_ip_type="v4"
+	[[ "${str_ip_type}" != "v4" && ${str_ip_type} != "v6" ]] && str_ip_type="v4"
+
+	green_line "Input rule protocol type (tcp,udp,gre,icmp,default tcp).(${str_hits}):"
+	read str_proto_type
+	[[ -z "${str_proto_type}" ]] && str_proto_type="tcp"
+	[[ "${str_proto_type}" != "tcp" && ${str_proto_type} != "udp" && "${str_proto_type}" != "icmp" && "${str_proto_type}" != "gre" ]] && red_line "invalid protocol type[${str_ip_type}]!" && return 3
+
+	green_line "Input rule subnet ,default your ipaddress(${str_hits})${PMT}"
+	read str_subnet
+	green_line "Input rule subnet size ,default 24(${str_hits})${PMT}"
+	read str_subsize
+	[[ -z "${str_subsize}" ]] && str_subsize="24"
+	[[ "${str_ip_type}" = "v4" && ( "${str_subsize}" -gt "32" || "${str_subsize}" -le "0" ) ]] && str_subsize="24"
+	[[ "${str_ip_type}" = "v6" && ( "${str_subsize}" -gt "128" || "${str_subsize}" -le "0" ) ]] && str_subsize="64"
+	[[ -z "${str_subnet}" ]] && str_subnet=`get_myip subnet ${str_subsize}`
+
+	green_line "Input rule port number,default 80(${str_hits})${PMT}"
+	read str_port
+	[[ -z "${str_port}" ]] && str_port="80"
+	[[ "${str_port}" -gt "65536" || "${str_port}" -le "0" ]] && str_port="80"
+
+	green_line "Input rule Notes,default deal_date.(${str_hits})${PMT}"
+	read str_notes
+
+	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/rule_create \
+	--data "FIREWALLGROUPID=${str_gid}" --data "direction=in" \
+	--data "ip_type=${str_ip_type}" --data "protocol=${str_proto_type}" \
+	--data "subnet=${str_subnet}" --data "subnet_size=${str_subsize}" \
+	--data "port=${str_port}" \
+	--data notes="${str_notes:-`date +%Y%m%d%H%M`}"| ${cmd_jq}
+
+
+}
+firewall_rule_load()
+{
+	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
+	read str_gid
+	[[ -z "${str_gid}" ]] && red_line "FIREWALLGROUPID must be invalid" && return 1
+
+    awk '/^[0-9]/' ${rule_file} | while read str_nouse str_proto_type str_ip_type str_subnet str_subsize str_port str_notes
+	do
+		[[ "${str_proto_type}" != "tcp" && ${str_proto_type} != "udp" && "${str_proto_type}" != "icmp" && "${str_proto_type}" != "gre" ]] && red_line "proto_type:[${str_proto_type}] invalid." && return 1
+		[[ "${str_ip_type}" != "v4" && ${str_ip_type} != "v6" ]] && red_line "ip_type:[${str_ip_type}] invalid." &&  return 2
+		[[ -z "${str_subnet}" ]]  && red_line "subnet:[$str_subnet] invalid." && return 3
+		[[ -z "${str_subsize}" ]]  && red_line "subsize:[$str_subsize] invalid." && return 4
+		[[ "${str_port}" -gt "65536" || "${str_port}" -le "0" ]] && red_line "port:[$str_port] invalid." && return 5
+
+		red_line "import rules:[$str_ip_type,$str_proto_type,$str_subnet/$str_subsize,$str_port,$str_notes]"
+		${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/rule_create \
+		--data "FIREWALLGROUPID=${str_gid}" --data "direction=in" \
+		--data "ip_type=${str_ip_type}" --data "protocol=${str_proto_type}" \
+		--data "subnet=${str_subnet}" --data "subnet_size=${str_subsize}" \
+		--data "port=${str_port}" \
+		--data notes="${str_notes:-`date +%Y%m%d%H%M`}"| ${cmd_jq}
+	done
+
+}
+firewall_rule_delete()
+{
+	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
+	read str_gid
+	[[ -z "${str_gid}" ]] && red_line "FIREWALLGROUPID must be invalid" && return 1
+
+	green_line "Input firewall rule number [0,50](${str_hits})${PMT}"
+	read str_rule_num
+	[[ -z "${str_rule_num}" ]] && red_line "str_rule_num must be invalid" && return 2
+
+	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/rule_delete \
+		--data "FIREWALLGROUPID=${str_gid}" --data "rulenumber=${str_rule_num}"| ${cmd_jq}
+
+
+}
+
+firewall_usage()
+{
+cat <<END
+
+`println "firewall menu"`
+	0 |g_list	: group_list
+	1 |g_create	: group_create
+	2 |g_delete	: group_delete
+	3 |g_set_desc: group_set_description
+	10|r_list	: rule_list
+	11|r_create	: rule_create
+	12|r_delete : rule_delete
+	13|r_load	: rule_load
+	q |quit to up level menu
+END
+}
+
+do_firewall()
+{
+	while :
+	do
+		firewall_usage
+		green_line "Input your choice:${str_hits}${PMT}"
+		read op_type
+		case "$op_type" in
+			### group config ####
+			g_list|0)
+				${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/group_list | ${cmd_jq}
+			;;
+			g_create|1)
+				firewall_group_create
+			;;
+			g_delete|2)
+				firewall_group_delete
+			;;
+			g_set_desc|3)
+				firewall_group_set_desc
+			;;
+			##### rule config ####
+			r_list|10)
+				firewall_rule_list
+			;;
+			r_create|11) 
+				firewall_rule_create
+			;;
+			r_delete|12)
+				firewall_rule_delete
+			;;
+			r_load|13)
+				firewall_rule_load
+			;;
+			q|quit)
+				return 0
+			;;
+		esac
+
+	done
+}
+
+
+###########  main process functions ###################
+usage()
+{
+cat <<END
+Usage:
+	`basename $0`  : tools for vultr api to manager firewall.
+END
+}
+show_basic_vultr()
+{
+	cat <<END
+`println "basic_vultr menu"`
+	0 |os list
+	1 |plan list for vc2
+	2 |regions list
+	q |quit to up level menu
+END
+}
+do_basic_vultr()
+{
+	while :
+	do
+		show_basic_vultr
+		green_line "Input your choice:${str_hits} ${PMT}"
+		read  str_choice
+		case "$str_choice" in
+			0|oslist)
+				red_line "OS list:"
+				${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/os/list | ${cmd_jq}
+			;;
+			1|plans_list)
+				red_line "Plans list for Vc2(\$2.5 and \$3.5 not available in the API):"
+				#${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/plans/list?type=vc2 | ${cmd_jq}
+				${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/plans/list_vc2 | ${cmd_jq}
+			;;
+			2|regions_list)
+				red_line "Regions list:"
+				${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/regions/list | ${cmd_jq}
+			;;
+			q|quit)
+				return 0
+			;;
+		esac
+	done
+}
+show_info()
+{
+cat <<END
+`println "main menu"`
+	0 |account
+	1 |auth
+	2 |server list
+	3 |firewall
+	4 |sshkey_list
+	20|basic vultr info menu
+	q |exit
+END
+}
+
+main()
+{
+	[[ -z "$api_key" ]] && red_line "Variable \$api_key must be set!" && return 1
+	[[ "${#api_key}" != "36" ]] && red_line "\$api_key length must be 36 [len:${#api_key}:value:${api_key}] !" && return 2
+
+	[[ -z "$cmd_curl" ]] && red_line "Variable \$cmd_curl must be set!" && return 3
+	while :
+	do
+		show_info
+		green_line "Input your choice:${str_hits} ${PMT} "
+		read str_answer
+		case "$str_answer" in
+			0|account)
+				red_line "Account Informations:"
+				red_line "	API  KEY: ${api_key}"
+				red_line "	CMD CURL: ${cmd_curl}"
+				red_line "	CMD   JQ: ${cmd_jq}"
+				red_line "	URL BASE: ${url_base}"
+
+				${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/account/info | ${cmd_jq}
+			;;
+			1|auth)
+				red_line "Auth info:"
+				${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/auth/info | ${cmd_jq}
+			;;
+			2|server_list)
+				red_line "Server list:"
+				${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/server/list | ${cmd_jq}
+			;;
+			3|firewall)
+				red_line "Firewall configure"
+				do_firewall
+			;;
+			4|sshkey_list)
+				red_line "SSH keys list:"
+				${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/sshkey/list | ${cmd_jq}
+			;;
+			20|basic_vultr)
+				do_basic_vultr
+
+			;;
+			q|quit|exit)
+				return 0
+			;;
+		esac
+	done
+}
+
+
+cmd_usage()
+{
+	cat <<END
+Usage:
+	`basename $0` [ -k <api-key> | -c <curl_cmd> ]
+Descriptions:
+	a script tool for vultr api 
+	you can use this tool to manager your vps's firewall's access control.
+
+Params:
+	-k <api-key>	: Your vultr api-key string , default \$api_key variable.
+	-c <curl_cmd>   : Command help you to execute http/https url API operations. Default "curl"
+Examples:
+	`basename $0` -k 123424240423042934023042   -c "proxychains4 curl"
+	`basename $0` -k 123424240423042934023042   
+	`basename $0` -c "proxychains4 curl"
+	`basename $0`
+END
+}
+############ 开始执行入口 ######
+
+while getopts ghb:k:c: arg_val
+do
+	case "$arg_val" in
+		k)
+			echo
+			red_line "**** WARNING: API key has been changed!****"
+			api_key="$OPTARG"
+		;;
+		c)
+			echo
+			red_line "**** WARNING: The \$cmd_curl has been changed to [${OPTARG}].****"
+			cmd_curl="$OPTARG"
+		;;
+	*)
+		cmd_usage
+		exit 0
+	esac
+done
+
+main 2>/dev/null
+
+## eof
