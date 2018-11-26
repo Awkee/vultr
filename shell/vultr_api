@@ -21,9 +21,13 @@ url_ipsb="http://ip.sb"
 
 rule_file=/tmp/firewall.rule.list
 
+#stty erase '^H'
+
 #cmd_curl="proxychains4 curl"
 cmd_curl="curl"
 cmd_jq="jq"
+cmd_read=" read "
+
 
 str_hits="(CTRL+C to Quit)"
 PMT=": >> "
@@ -118,7 +122,7 @@ get_myip()
 firewall_group_create()
 {
 	green_line "Input firewall group description (${str_hits})${PMT}"
-	read str_in
+	${cmd_read} str_in
 	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/group_create \
 	--data "description=${str_in}"| ${cmd_jq}
 
@@ -127,7 +131,7 @@ firewall_group_delete()
 {
 	red_line "*********** firewall Group Delete ************"
 	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
-	read str_in
+	${cmd_read} str_in
 	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/group_delete \
 	--data "FIREWALLGROUPID=${str_in}"| ${cmd_jq}
 }
@@ -135,10 +139,10 @@ firewall_group_delete()
 firewall_group_set_desc()
 {
 	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
-	read str_gid
+	${cmd_read} str_gid
 
 	green_line "Input firewall group description (${str_hits})${PMT}"
-	read str_desc
+	${cmd_read} str_desc
 	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/group_set_description \
 		--data "FIREWALLGROUPID=${str_gid}" --data "description=${str_desc}"| ${cmd_jq}
 }
@@ -146,11 +150,11 @@ firewall_group_set_desc()
 firewall_rule_list()
 {
 	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
-	read str_gid
+	${cmd_read} str_gid
 	[[ -z "${str_gid}" ]] && red_line "FIREWALLGROUPID must be invalid" && return 1
 
 	green_line "Input ip_type (v4/v6,default v4) (${str_hits})${PMT}"
-	read str_ip_type
+	${cmd_read} str_ip_type
 	[[ -z "${str_ip_type}" ]] && str_ip_type="v4"
 	[[ "${str_ip_type}" != "v4" &&  ${str_ip_type} != "v6" ]] && red_line "invalid ip_type[${str_ip_type}]!v4/v6?" && return 2
 
@@ -183,35 +187,35 @@ firewall_rule_list()
 firewall_rule_create()
 {
 	green_line "Input firewall group FIREWALLGROUPID ${str_hits}${PMT}"
-	read str_gid
+	${cmd_read} str_gid
 	[[ -z "${str_gid}" ]] && red_line "FIREWALLGROUPID must be invalid" && return 1
 
 	green_line "Input ip_type (v4/v6,default v4) (${str_hits})${PMT}"
-	read str_ip_type
+	${cmd_read} str_ip_type
 	[[ -z "${str_ip_type}" ]] && str_ip_type="v4"
 	[[ "${str_ip_type}" != "v4" && ${str_ip_type} != "v6" ]] && str_ip_type="v4"
 
 	green_line "Input rule protocol type (tcp,udp,gre,icmp,default tcp).(${str_hits}):"
-	read str_proto_type
+	${cmd_read} str_proto_type
 	[[ -z "${str_proto_type}" ]] && str_proto_type="tcp"
 	[[ "${str_proto_type}" != "tcp" && ${str_proto_type} != "udp" && "${str_proto_type}" != "icmp" && "${str_proto_type}" != "gre" ]] && red_line "invalid protocol type[${str_ip_type}]!" && return 3
 
 	green_line "Input rule subnet ,default your ipaddress(${str_hits})${PMT}"
-	read str_subnet
+	${cmd_read} str_subnet
 	green_line "Input rule subnet size ,default 24(${str_hits})${PMT}"
-	read str_subsize
+	${cmd_read} str_subsize
 	[[ -z "${str_subsize}" ]] && str_subsize="24"
 	[[ "${str_ip_type}" = "v4" && ( "${str_subsize}" -gt "32" || "${str_subsize}" -le "0" ) ]] && str_subsize="24"
 	[[ "${str_ip_type}" = "v6" && ( "${str_subsize}" -gt "128" || "${str_subsize}" -le "0" ) ]] && str_subsize="64"
 	[[ -z "${str_subnet}" ]] && str_subnet=`get_myip subnet ${str_subsize}`
 
 	green_line "Input rule port number,default 80(${str_hits})${PMT}"
-	read str_port
+	${cmd_read} str_port
 	[[ -z "${str_port}" ]] && str_port="80"
 	[[ "${str_port}" -gt "65536" || "${str_port}" -le "0" ]] && str_port="80"
 
 	green_line "Input rule Notes,default deal_date.(${str_hits})${PMT}"
-	read str_notes
+	${cmd_read} str_notes
 
 	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/rule_create \
 	--data "FIREWALLGROUPID=${str_gid}" --data "direction=in" \
@@ -225,10 +229,10 @@ firewall_rule_create()
 firewall_rule_load()
 {
 	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
-	read str_gid
+	${cmd_read} str_gid
 	[[ -z "${str_gid}" ]] && red_line "FIREWALLGROUPID must be invalid" && return 1
 
-    awk '/^[0-9]/' ${rule_file} | while read str_nouse str_proto_type str_ip_type str_subnet str_subsize str_port str_notes
+    awk '/^[0-9]/' ${rule_file} | while ${cmd_read} str_nouse str_proto_type str_ip_type str_subnet str_subsize str_port str_notes
 	do
 		[[ "${str_proto_type}" != "tcp" && ${str_proto_type} != "udp" && "${str_proto_type}" != "icmp" && "${str_proto_type}" != "gre" ]] && red_line "proto_type:[${str_proto_type}] invalid." && return 1
 		[[ "${str_ip_type}" != "v4" && ${str_ip_type} != "v6" ]] && red_line "ip_type:[${str_ip_type}] invalid." &&  return 2
@@ -249,11 +253,11 @@ firewall_rule_load()
 firewall_rule_delete()
 {
 	green_line "Input firewall group FIREWALLGROUPID (${str_hits})${PMT}"
-	read str_gid
+	${cmd_read} str_gid
 	[[ -z "${str_gid}" ]] && red_line "FIREWALLGROUPID must be invalid" && return 1
 
 	green_line "Input firewall rule number [0,50](${str_hits})${PMT}"
-	read str_rule_num
+	${cmd_read} str_rule_num
 	[[ -z "${str_rule_num}" ]] && red_line "str_rule_num must be invalid" && return 2
 
 	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/rule_delete \
@@ -285,7 +289,7 @@ do_firewall()
 	do
 		firewall_usage
 		green_line "Input your choice:${str_hits}${PMT}"
-		read op_type
+		${cmd_read} op_type
 		case "$op_type" in
 			### group config ####
 			g_list|0)
@@ -346,7 +350,7 @@ do_basic_vultr()
 	do
 		show_basic_vultr
 		green_line "Input your choice:${str_hits} ${PMT}"
-		read  str_choice
+		${cmd_read}  str_choice
 		case "$str_choice" in
 			0|oslist)
 				red_line "OS list:"
@@ -391,7 +395,7 @@ main()
 	do
 		show_info
 		green_line "Input your choice:${str_hits} ${PMT} "
-		read str_answer
+		${cmd_read} str_answer
 		case "$str_answer" in
 			0|account)
 				red_line "Account Informations:"
