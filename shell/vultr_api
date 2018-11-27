@@ -21,7 +21,7 @@ url_ipsb="http://ip.sb"
 
 rule_file=/tmp/firewall.rule.list
 
-#stty erase '^H'
+stty erase '^H'
 
 #cmd_curl="proxychains4 curl"
 cmd_curl="curl"
@@ -103,11 +103,10 @@ get_subnet()
 get_myip()
 {
 	l_str_myip=`curl "${url_ipcn}" 2>/dev/null | awk '/IP/{ print $3 }'`
-	[[ "$?" != "0" ]]  &&  l_str_myip=`curl "${url_ipsb}" 2>/dev/null`
 	[[ "$?" != "0" ]]  &&  return 1
-	if [ "$l_str_myip" = "" ] ; then
-		return 2
-	fi
+	[[ "l_str_myip" = "" ]]  &&  l_str_myip=`curl "${url_ipsb}" 2>/dev/null`
+	[[ "$l_str_myip" = "" ]] && return 2
+
 	case "$1" in 
 		subnet)
 			l_str_myip=`get_subnet ${l_str_myip} ${2:-24}`
@@ -207,15 +206,17 @@ firewall_rule_create()
 	[[ -z "${str_subsize}" ]] && str_subsize="24"
 	[[ "${str_ip_type}" = "v4" && ( "${str_subsize}" -gt "32" || "${str_subsize}" -le "0" ) ]] && str_subsize="24"
 	[[ "${str_ip_type}" = "v6" && ( "${str_subsize}" -gt "128" || "${str_subsize}" -le "0" ) ]] && str_subsize="64"
-	[[ -z "${str_subnet}" ]] && str_subnet=`get_myip subnet ${str_subsize}`
 
 	green_line "Input rule port number,default 80(${str_hits})${PMT}"
 	${cmd_read} str_port
 	[[ -z "${str_port}" ]] && str_port="80"
-	[[ "${str_port}" -gt "65536" || "${str_port}" -le "0" ]] && str_port="80"
+	[[ "${str_port}" -gt "65536" || "${str_port}" -le "0" ]] && red_line "set port range error,[0,65535],your input value: [$str_port]" && return 4
 
 	green_line "Input rule Notes,default deal_date.(${str_hits})${PMT}"
 	${cmd_read} str_notes
+
+	[[ -z "${str_subnet}" ]] && str_subnet=`get_myip subnet ${str_subsize}`
+	red_line "自动获取您的IP地址:[${str_subnet}], return:[$?] "
 
 	${cmd_curl} -H "API-Key: ${api_key}" ${url_base}/v1/firewall/rule_create \
 	--data "FIREWALLGROUPID=${str_gid}" --data "direction=in" \
